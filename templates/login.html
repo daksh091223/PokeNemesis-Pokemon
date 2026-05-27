@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PokéNemesis - Login</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container auth-container">
+        <h1>⚔️ POKÉNEMESIS ⚔️</h1>
+        <p class="subtitle">Build your nemesis team</p>
+
+        <div class="auth-box">
+            <h2>LOGIN</h2>
+            <!-- FIX: Removed <form> tag to prevent page refresh on submit; using div + button with JS handler -->
+            <div class="form-group">
+                <label>USERNAME</label>
+                <input type="text" id="username" placeholder="Enter username" autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label>PASSWORD</label>
+                <input type="password" id="password" placeholder="Enter password" autocomplete="current-password">
+            </div>
+            <button id="loginBtn" class="btn-primary">▶ LOGIN</button>
+            <div id="message" class="error-msg"></div>
+            <p class="auth-link">New trainer? <a href="/register">Register here</a></p>
+        </div>
+    </div>
+
+    <script>
+        // Allow pressing Enter to submit
+        document.getElementById('password').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') doLogin();
+        });
+        document.getElementById('username').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') doLogin();
+        });
+        document.getElementById('loginBtn').addEventListener('click', doLogin);
+
+        async function doLogin() {
+            const btn = document.getElementById('loginBtn');
+            const msg = document.getElementById('message');
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            msg.innerText = '';
+            if (!username || !password) {
+                msg.innerText = 'Please enter username and password.';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerText = 'LOADING...';
+
+            try {
+                const res = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    window.location.href = '/dashboard';
+                } else {
+                    msg.innerText = data.error || 'Login failed.';
+                    btn.disabled = false;
+                    btn.innerText = '▶ LOGIN';
+                }
+            } catch (err) {
+                msg.innerText = 'Connection error. Is the server running?';
+                btn.disabled = false;
+                btn.innerText = '▶ LOGIN';
+            }
+        }
+    </script>
+</body>
+</html>

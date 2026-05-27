@@ -1,0 +1,283 @@
+/* Pixelated Theme */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+* {
+    box-sizing: border-box;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+}
+
+body {
+    background: #2e2e2e;
+    background-image: repeating-linear-gradient(0deg, #3a3a3a 1px, #2e2e2e 2px);
+    font-family: 'Press Start 2P', monospace;
+    color: #f0f0f0;
+    margin: 0;
+    padding: 20px;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: #1a1a1a;
+    border: 4px solid #6b6b6b;
+    padding: 24px;
+    box-shadow: 8px 8px 0 #00000055;
+}
+
+/* Auth pages get a narrower container */
+.auth-container {
+    max-width: 480px;
+    margin: 60px auto;
+    text-align: center;
+}
+
+h1 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 18px;
+    text-shadow: 2px 2px 0 #000, 0 0 20px #44ff44aa;
+    color: #88ff88;
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+h2 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 13px;
+    text-shadow: 2px 2px 0 #000;
+    margin-top: 0;
+}
+
+h3 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    text-shadow: 2px 2px 0 #000;
+    margin-top: 0;
+}
+
+.subtitle {
+    font-size: 9px;
+    color: #888;
+    margin-bottom: 28px;
+}
+
+/* Auth box */
+.auth-box {
+    background: #242424;
+    border: 2px solid #5a5a5a;
+    padding: 24px;
+    text-align: left;
+}
+
+.auth-box h2 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #cccccc;
+}
+
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 9px;
+    color: #aaa;
+    margin-bottom: 6px;
+}
+
+.form-group input {
+    width: 100%;
+}
+
+.btn-primary {
+    width: 100%;
+    padding: 12px;
+    font-size: 12px;
+    background: #1e4a1e;
+    border: 2px solid #33aa33;
+    color: #88ff88;
+    margin-top: 8px;
+    margin-bottom: 12px;
+}
+
+.btn-primary:hover {
+    background: #285a28;
+    border-color: #55cc55;
+}
+
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.error-msg {
+    font-size: 9px;
+    color: #ff7777;
+    min-height: 16px;
+    margin-bottom: 8px;
+    word-break: break-word;
+}
+
+.success-msg {
+    font-size: 9px;
+    color: #77ff77;
+    min-height: 16px;
+    margin-bottom: 8px;
+}
+
+.auth-link {
+    font-size: 9px;
+    color: #888;
+    text-align: center;
+    margin-top: 12px;
+    margin-bottom: 0;
+}
+
+.auth-link a {
+    color: #88ff88;
+    text-decoration: none;
+}
+
+.auth-link a:hover {
+    text-decoration: underline;
+}
+
+/* General buttons */
+button, .button {
+    background: #4e4e4e;
+    border: 2px solid #8b8b8b;
+    color: white;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: all 0.1s ease;
+}
+
+button:hover {
+    background: #6e6e6e;
+    border-color: #adadad;
+    transform: translate(-1px, -1px);
+}
+
+button:active {
+    transform: translate(1px, 1px);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+input, select {
+    background: #2a2a2a;
+    border: 2px solid #6b6b6b;
+    color: white;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    padding: 8px;
+}
+
+input:focus, select:focus {
+    outline: none;
+    border-color: #88ff88;
+}
+
+/* Team grid */
+.grid-6 {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+@media (max-width: 768px) {
+    .grid-6 {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 480px) {
+    .grid-6 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.pokemon-slot {
+    background: #2a2a2a;
+    border: 2px solid #6b6b6b;
+    text-align: center;
+    padding: 10px;
+    min-height: 140px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.15s;
+}
+
+.pokemon-slot:hover {
+    border-color: #88ff88;
+}
+
+.pokemon-slot img {
+    width: 80px;
+    height: 80px;
+    image-rendering: pixelated;
+    margin-bottom: 4px;
+}
+
+.slot-empty {
+    color: #8b8b8b;
+    font-size: 9px;
+}
+
+/* Saved teams list */
+.team-item {
+    background: #242424;
+    border: 2px solid #5a5a5a;
+    margin-bottom: 10px;
+    padding: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.team-name {
+    font-size: 10px;
+    min-width: 80px;
+}
+
+.team-preview {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.team-preview img {
+    width: 36px;
+    height: 36px;
+    image-rendering: pixelated;
+}
+
+.team-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #1a1a1a; }
+::-webkit-scrollbar-thumb { background: #5a5a5a; }
+::-webkit-scrollbar-thumb:hover { background: #7a7a7a; }

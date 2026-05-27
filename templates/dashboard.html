@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PokéNemesis - Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal.open { display: flex; }
+        .modal-content {
+            background: #1a1a1a;
+            border: 4px solid #6b6b6b;
+            padding: 20px;
+            width: 420px;
+            max-width: 95vw;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .modal-content h3 { margin-top: 0; font-size: 12px; }
+        #searchInput { width: 100%; margin-bottom: 10px; }
+        .search-results {
+            flex: 1;
+            overflow-y: auto;
+            margin-top: 8px;
+            border: 1px solid #3a3a3a;
+        }
+        .search-result-item {
+            padding: 8px 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #2a2a2a;
+            font-size: 10px;
+            text-transform: capitalize;
+        }
+        .search-result-item img {
+            width: 32px;
+            height: 32px;
+            image-rendering: pixelated;
+        }
+        .search-result-item:hover { background: #3a3a3a; }
+        .team-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+        /* FIX: remove-btn must not trigger the slot's click-to-open-modal */
+        .remove-btn {
+            background: #8b2020;
+            border-color: #cc3333;
+            font-size: 10px;
+            padding: 4px 8px;
+            margin-top: 4px;
+        }
+        .remove-btn:hover { background: #aa2828; }
+
+        .pokemon-slot { cursor: pointer; position: relative; }
+        .pokemon-slot div.poke-name {
+            font-size: 8px;
+            text-transform: capitalize;
+            margin-top: 4px;
+            word-break: break-all;
+        }
+
+        .section-title {
+            border-bottom: 2px solid #6b6b6b;
+            padding-bottom: 8px;
+            margin-bottom: 16px;
+        }
+
+        #generateNemesisBtn { background: #1a4a1a; border-color: #33aa33; }
+        #generateNemesisBtn:hover { background: #226622; }
+
+        .nemesis-label {
+            font-size: 9px;
+            color: #aaa;
+            margin-bottom: 16px;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            font-size: 12px;
+        }
+        .loading-overlay.visible { display: flex; }
+
+        .status-banner {
+            font-size: 9px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            border: 2px solid #555;
+            display: none;
+        }
+        .status-banner.success { border-color: #33aa33; color: #88ff88; background: #0a1f0a; }
+        .status-banner.error   { border-color: #aa3333; color: #ff8888; background: #1f0a0a; }
+        .status-banner.warning { border-color: #aaaa33; color: #ffff88; background: #1f1f0a; }
+        .status-banner.info    { border-color: #3388aa; color: #88ccff; background: #0a101f; }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">⚡ GENERATING NEMESIS...</div>
+
+    <div class="container">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h1 style="margin: 0;">⚔️ POKÉNEMESIS</h1>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 10px;">Trainer: <span id="username" style="color:#88ff88;"></span></span>
+                <button id="logoutBtn">LOGOUT</button>
+            </div>
+        </div>
+
+        <!-- Status Banner -->
+        <div id="statusBanner" class="status-banner" style="display:none;"></div>
+
+        <!-- Team Builder -->
+        <h2 class="section-title">YOUR TEAM</h2>
+        <div id="teamSlots" class="grid-6"></div>
+
+        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 28px; flex-wrap: wrap;">
+            <input type="text" id="teamName" placeholder="Team Name" style="width: 180px;">
+            <button id="saveTeamBtn">💾 SAVE TEAM</button>
+            <button id="generateNemesisBtn">⚡ GENERATE NEMESIS</button>
+        </div>
+
+        <!-- Saved Teams -->
+        <h2 class="section-title">SAVED TEAMS <span style="font-size:9px; color:#888;">(max 10)</span></h2>
+        <div id="savedTeamsList"></div>
+
+        <!-- Nemesis Result -->
+        <h2 class="section-title">NEMESIS TEAM</h2>
+        <p class="nemesis-label">The optimal team to counter yours</p>
+        <div id="nemesisSlots" class="grid-6"></div>
+    </div>
+
+    <!-- Pokemon Selection Modal -->
+    <div id="pokemonModal" class="modal">
+        <div class="modal-content">
+            <h3>SELECT POKÉMON</h3>
+            <input type="text" id="searchInput" placeholder="Search by name..." autocomplete="off">
+            <div id="searchResults" class="search-results"></div>
+            <button id="closeModal" style="margin-top:10px;">✖ CLOSE</button>
+        </div>
+    </div>
+
+    <script>
+        // ---------- Global State ----------
+        let pokemonList = [];
+        let currentTeam = [null, null, null, null, null, null];
+        let activeSlot = null;
+
+        // Helper: format name for sprite file
+        function formatSpriteName(name) {
+            return name.toLowerCase().replace(/[\s\-\.\':♀♂]/g, '').replace(/[^\w]/g, '');
+        }
+
+        function getSpriteUrl(name) {
+            return `/static/sprites/${formatSpriteName(name)}.png`;
+        }
+
+        // ---------- Banner / Status Messages ----------
+        function showBanner(message, type = 'info') {
+            const banner = document.getElementById('statusBanner');
+            banner.innerText = message;
+            banner.className = `status-banner ${type}`;
+            banner.style.display = 'block';
+        }
+        function hideBanner() {
+            const banner = document.getElementById('statusBanner');
+            if (banner) banner.style.display = 'none';
+        }
+
+        // ---------- Data Fetching ----------
+        async function fetchUserData() {
+            const res = await fetch('/api/user');
+            if (!res.ok) {
+                window.location.href = '/login';
+                return;
+            }
+            const data = await res.json();
+            document.getElementById('username').innerText = data.username;
+        }
+
+        async function fetchPokemonList() {
+            try {
+                const res = await fetch('/api/pokemon');
+                if (!res.ok) {
+                    showBanner('❌ Could not load Pokémon from database. Is the DB connected?', 'error');
+                    return;
+                }
+                const data = await res.json();
+                if (data.length === 0) {
+                    showBanner('⚠️ Database is empty! Run DataExtraction.py first to populate Pokémon data.', 'warning');
+                    return;
+                }
+                pokemonList = data.map(p => ({
+                    id: p.id,
+                    name: p.name,
+                    sprite_url: getSpriteUrl(p.name)
+                }));
+                showBanner(`✅ Loaded ${pokemonList.length} Pokémon!`, 'success');
+                setTimeout(() => hideBanner(), 3000);
+            } catch (err) {
+                showBanner('❌ Network error loading Pokémon. Is Flask running?', 'error');
+            }
+        }
+
+        async function fetchTeams() {
+            const res = await fetch('/api/teams');
+            if (!res.ok) return;
+            const teams = await res.json();
+            renderSavedTeams(teams);
+        }
+
+        // ---------- Render Functions ----------
+        function renderTeamSlots() {
+            const container = document.getElementById('teamSlots');
+            container.innerHTML = '';
+            currentTeam.forEach((pokemon, idx) => {
+                const slot = document.createElement('div');
+                slot.className = 'pokemon-slot';
+
+                if (pokemon) {
+                    slot.innerHTML = `
+                        <img src="${pokemon.sprite_url}" alt="${pokemon.name}" onerror="this.src='/static/sprites/unknown.png'">
+                        <div class="poke-name">${pokemon.name}</div>
+                        <button class="remove-btn" data-index="${idx}">✖ REMOVE</button>
+                    `;
+                } else {
+                    slot.innerHTML = `<div class="slot-empty">+ ADD</div>`;
+                }
+
+                // FIX: Only open modal if the click is NOT on the remove button
+                slot.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('remove-btn') || e.target.closest('.remove-btn')) return;
+                    openModal(idx);
+                });
+
+                container.appendChild(slot);
+            });
+
+            // Attach remove button listeners separately
+            container.querySelectorAll('.remove-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const idx = parseInt(btn.dataset.index);
+                    currentTeam[idx] = null;
+                    renderTeamSlots();
+                });
+            });
+        }
+
+        function renderSavedTeams(teams) {
+            const container = document.getElementById('savedTeamsList');
+            if (teams.length === 0) {
+                container.innerHTML = '<p style="font-size:10px; color:#888;">No teams saved yet.</p>';
+                return;
+            }
+            container.innerHTML = '';
+            teams.forEach(team => {
+                const div = document.createElement('div');
+                div.className = 'team-item';
+                const previewImgs = team.pokemon_ids.map(id => {
+                    const poke = pokemonList.find(p => p.id === id);
+                    if (!poke) return '';
+                    return `<img src="${poke.sprite_url}" title="${poke.name}" onerror="this.style.display='none'">`;
+                }).join('');
+
+                div.innerHTML = `
+                    <div class="team-name" style="font-size:10px;">${team.name}</div>
+                    <div class="team-preview">${previewImgs}</div>
+                    <div class="team-actions">
+                        <button class="load-team" data-pokemon='${JSON.stringify(team.pokemon_ids)}'>LOAD</button>
+                        <button class="delete-team" data-id="${team.id}" style="background:#5a1a1a; border-color:#aa3333;">DELETE</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+
+            container.querySelectorAll('.load-team').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const ids = JSON.parse(btn.dataset.pokemon);
+                    loadTeamByIds(ids);
+                });
+            });
+
+            container.querySelectorAll('.delete-team').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const teamId = btn.dataset.id;
+                    await fetch(`/api/teams/${teamId}`, { method: 'DELETE' });
+                    fetchTeams();
+                });
+            });
+        }
+
+        function loadTeamByIds(ids) {
+            currentTeam = ids.map(id => pokemonList.find(p => p.id === id) || null);
+            renderTeamSlots();
+            // Clear nemesis when loading a new team
+            document.getElementById('nemesisSlots').innerHTML = '';
+        }
+
+        function renderNemesisTeam(nemesisIds) {
+            const container = document.getElementById('nemesisSlots');
+            container.innerHTML = '';
+            nemesisIds.forEach(id => {
+                const pokemon = pokemonList.find(p => p.id === id);
+                if (!pokemon) return;
+                const slot = document.createElement('div');
+                slot.className = 'pokemon-slot';
+                slot.style.cursor = 'default';
+                slot.innerHTML = `
+                    <img src="${pokemon.sprite_url}" alt="${pokemon.name}" onerror="this.style.display='none'">
+                    <div class="poke-name">${pokemon.name}</div>
+                `;
+                container.appendChild(slot);
+            });
+        }
+
+        // ---------- Modal ----------
+        function openModal(slotIndex) {
+            activeSlot = slotIndex;
+            document.getElementById('pokemonModal').classList.add('open');
+            const searchInput = document.getElementById('searchInput');
+            searchInput.value = '';
+            searchInput.focus();
+            renderSearchResults('');
+        }
+
+        function closeModal() {
+            document.getElementById('pokemonModal').classList.remove('open');
+            activeSlot = null;
+        }
+
+        function renderSearchResults(query) {
+            const container = document.getElementById('searchResults');
+            container.innerHTML = '';
+
+            // Show helpful messages if data isn't loaded yet
+            if (pokemonList.length === 0) {
+                container.innerHTML = `
+                    <div style="padding:16px; font-size:9px; color:#ff8888; text-align:center; line-height:2;">
+                        ⚠️ No Pokémon loaded!<br><br>
+                        You need to run<br>
+                        <code style="color:#88ff88;">python DataExtraction.py</code><br><br>
+                        to populate the database first.
+                    </div>`;
+                return;
+            }
+
+            const results = pokemonList
+                .filter(p => p.name.toLowerCase().includes(query.toLowerCase()))
+                .slice(0, 50);
+
+            if (results.length === 0) {
+                container.innerHTML = `<div style="padding:12px; font-size:9px; color:#888; text-align:center;">No Pokémon found for "${query}"</div>`;
+                return;
+            }
+            results.forEach(poke => {
+                const item = document.createElement('div');
+                item.className = 'search-result-item';
+                item.innerHTML = `
+                    <img src="${poke.sprite_url}" alt="${poke.name}" onerror="this.style.display='none'">
+                    <span>${poke.name}</span>
+                `;
+                item.addEventListener('click', () => {
+                    currentTeam[activeSlot] = poke;
+                    renderTeamSlots();
+                    closeModal();
+                });
+                container.appendChild(item);
+            });
+        }
+
+        // ---------- Event Handlers ----------
+        async function saveTeam() {
+            const name = document.getElementById('teamName').value.trim();
+            if (!name) { alert('Please enter a team name'); return; }
+            if (currentTeam.includes(null)) { alert('Please fill all 6 slots'); return; }
+
+            const pokemonIds = currentTeam.map(p => p.id);
+            const res = await fetch('/api/teams', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, pokemon_ids: pokemonIds })
+            });
+            if (res.ok) {
+                document.getElementById('teamName').value = '';
+                fetchTeams();
+                alert('Team saved!');
+            } else {
+                const err = await res.json();
+                alert(err.error || 'Failed to save team');
+            }
+        }
+
+        async function generateNemesis() {
+            if (currentTeam.includes(null)) {
+                alert('Please fill all 6 slots before generating nemesis');
+                return;
+            }
+            const pokemonIds = currentTeam.map(p => p.id);
+            const overlay = document.getElementById('loadingOverlay');
+            overlay.classList.add('visible');
+
+            try {
+                const res = await fetch('/api/nemesis', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ team: pokemonIds })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    renderNemesisTeam(data.nemesis_team);
+                    // Scroll to nemesis section
+                    document.getElementById('nemesisSlots').scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    const err = await res.json();
+                    alert(err.error || 'Nemesis generation failed');
+                }
+            } catch (err) {
+                alert('Connection error generating nemesis');
+            } finally {
+                overlay.classList.remove('visible');
+            }
+        }
+
+        // ---------- Init ----------
+        window.addEventListener('load', async () => {
+            await fetchUserData();
+            await fetchPokemonList();
+            await fetchTeams();
+            renderTeamSlots();
+
+            // Modal events
+            document.getElementById('closeModal').addEventListener('click', closeModal);
+            document.getElementById('searchInput').addEventListener('input', e => renderSearchResults(e.target.value));
+            document.getElementById('saveTeamBtn').addEventListener('click', saveTeam);
+            document.getElementById('generateNemesisBtn').addEventListener('click', generateNemesis);
+            document.getElementById('logoutBtn').addEventListener('click', () => {
+                fetch('/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+            });
+
+            // FIX: Close modal when clicking the dark backdrop (not the modal content)
+            document.getElementById('pokemonModal').addEventListener('click', (e) => {
+                if (e.target === document.getElementById('pokemonModal')) closeModal();
+            });
+        });
+    </script>
+</body>
+</html>
