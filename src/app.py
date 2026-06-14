@@ -6,13 +6,12 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here-change-in-production'  # Change this!
+app.secret_key = 'your-secret-key-here-change-in-production'
 
-# Database connection settings (adjust if needed)
 DB_CONFIG = {
     'dbname': 'PokemonDatabase',
     'user': 'postgres',
-    'password': 'Yash@1234',
+    'password': 'abcd1234',
     'host': 'localhost',
     'port': '5432'
 }
@@ -25,14 +24,13 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
-            # For API routes return 401, for page routes redirect
             if request.path.startswith('/api/'):
                 return jsonify({'error': 'Not logged in'}), 401
             return redirect(url_for('login_page'))
         return f(*args, **kwargs)
     return decorated_function
 
-# ---------- Routes for pages ----------
+# ---------- Page routes ----------
 @app.route('/')
 def home():
     if 'user_id' in session:
@@ -69,7 +67,6 @@ def api_user():
 @app.route('/api/pokemon', methods=['GET'])
 @login_required
 def api_pokemon():
-    """Return list of all Pokémon with id and name (ordered by id)."""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT id, name FROM pokemon ORDER BY id")
@@ -94,22 +91,20 @@ def api_teams():
         return jsonify([{
             'id': r[0],
             'name': r[1],
-            'pokemon_ids': r[2]  # already a list (PostgreSQL array)
+            'pokemon_ids': r[2]
         } for r in rows])
-    else:  # POST – create new team
+    else:
         data = request.get_json()
         name = data.get('name')
-        pokemon_ids = data.get('pokemon_ids')  # list of 6 ints
+        pokemon_ids = data.get('pokemon_ids')
         if not name or not pokemon_ids or len(pokemon_ids) != 6:
             return jsonify({'error': 'Invalid team data'}), 400
-        # Check team count limit (max 10)
         cur.execute("SELECT COUNT(*) FROM teams WHERE user_id = %s", (session['user_id'],))
         count = cur.fetchone()[0]
         if count >= 10:
             cur.close()
             conn.close()
             return jsonify({'error': 'You already have 10 teams. Delete one first.'}), 400
-        # Insert — use DEFAULT for id (SERIAL)
         cur.execute("""
             INSERT INTO teams (user_id, name, pokemon_ids)
             VALUES (%s, %s, %s)
@@ -124,85 +119,154 @@ def api_teams():
 def api_delete_team(team_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    # Ensure team belongs to current user
     cur.execute("DELETE FROM teams WHERE id = %s AND user_id = %s", (team_id, session['user_id']))
     conn.commit()
     cur.close()
     conn.close()
     return jsonify({'success': True})
 
-@app.route('/api/nemesis', methods=['POST'])
+
+# =============================================================
+# SHARED HELPER — loads all pokemon data for both GA and RL
+# =============================================================
+def load_all_pokemon_data(opponent_ids):
+    """
+    Loads all pokemon + types + moves from DB.
+    Returns (all_pokemon, opponent_team) as nemesisGA.Pokemon objects.
+    Used by both /api/nemesis/ga and /api/nemesis/rl routes.
+    """
+    from nemesisGA import Pokemon, Move
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id, name, hp, atk, def, sp_atk, sp_def, speed FROM pokemon")
+    pokemon_rows = cur.fetchall()
+
+    cur.execute("""
+        SELECT pt.pokemon_id, t.name
+        FROM pokemon_types pt
+        JOIN types t ON pt.type_id = t.id
+    """)
+    p_types = {}
+    for pid, tname in cur.fetchall():
+        p_types.setdefault(pid, []).append(tname)
+
+    move_rows = []
+    try:
+        cur.execute("""
+            SELECT pm.pokemon_id, m.name, m.power, t.name, m.accuracy
+            FROM pokemon_moves pm
+            JOIN moves m ON pm.move_id = m.id
+            JOIN types t ON m.type_id = t.id
+        """)
+        move_rows = cur.fetchall()
+    except psycopg2.Error:
+        conn.rollback()
+
+    p_moves = {}
+    for pid, m_name, base_power, m_type, accuracy in move_rows:
+        p_moves.setdefault(pid, []).append(Move(m_name, base_power, m_type, accuracy))
+
+    cur.close()
+    conn.close()
+
+    all_pokemon = []
+    opponent_team = []
+    opponent_id_set = set(opponent_ids)
+
+    for row in pokemon_rows:
+        pid, name, hp, atk, defense, sp_atk, sp_def, speed = row
+        types = p_types.get(pid, ['normal'])
+        learnset = p_moves.get(pid, [])
+        # Fallback — give STAB move if no moves in DB
+        if not learnset:
+            for t in types:
+                learnset.append(Move(f"{t} Strike", 90, t, 100))
+        p = Pokemon(
+            id=pid, name=name, types=types,
+            hp=hp, attack=atk, defense=defense,
+            sp_atk=sp_atk, sp_def=sp_def, speed=speed,
+            learnset=learnset
+        )
+        all_pokemon.append(p)
+        if pid in opponent_id_set:
+            opponent_team.append(p)
+
+    return all_pokemon, opponent_team
+
+
+# =============================================================
+# ROUTE 1 — Genetic Algorithm Nemesis  →  /api/nemesis/ga
+# =============================================================
+@app.route('/api/nemesis/ga', methods=['POST'])
 @login_required
-def api_nemesis():
+def api_nemesis_ga():
     data = request.get_json()
     opponent_ids = data.get('team')
     if not opponent_ids or len(opponent_ids) != 6:
         return jsonify({'error': 'Team must contain exactly 6 Pokémon IDs'}), 400
 
-    conn = get_db_connection()
-    cur = conn.cursor()
+    from nemesisGA import load_type_chart_from_db, genetic_algorithm, TYPE_CHART
 
-    # Fetch types for all Pokémon (for quick lookup)
-    cur.execute("""
-        SELECT pt.pokemon_id, t.id, t.name
-        FROM pokemon_types pt
-        JOIN types t ON pt.type_id = t.id
-    """)
-    pokemon_types = {}
-    for pid, tid, tname in cur.fetchall():
-        if pid not in pokemon_types:
-            pokemon_types[pid] = []
-        pokemon_types[pid].append(tid)
+    # Load type chart into memory if not already loaded
+    if not TYPE_CHART:
+        load_type_chart_from_db(DB_CONFIG)
 
-    # Fetch type effectiveness mapping
-    cur.execute("SELECT atk_id, def_id, multiplier FROM type_effectiveness")
-    effectiveness = {}
-    for atk, dfn, mul in cur.fetchall():
-        effectiveness[(atk, dfn)] = mul
+    try:
+        all_pokemon, opponent_team = load_all_pokemon_data(opponent_ids)
+        if len(opponent_team) != 6:
+            return jsonify({'error': 'Could not find all 6 opponent Pokémon in DB'}), 400
 
-    # Fetch all available pokemon IDs once (not inside the loop!)
-    cur.execute("SELECT id FROM pokemon ORDER BY id")
-    all_pokemon_ids = [row[0] for row in cur.fetchall()]
+        print(f"[GA] Running for opponent team ids: {opponent_ids}")
+        final_team = genetic_algorithm(
+            opponent_team, all_pokemon,
+            generations=30, pop_size=40
+        )
+        return jsonify({'nemesis_team': [p.id for p in final_team]})
 
-    # For each opponent, find the best counter based on type effectiveness
-    counter_scores = {}
-    for opp_id in opponent_ids:
-        opp_types = pokemon_types.get(opp_id, [])
-        best_score = -1
-        best_pokemon = None
-        for pid in all_pokemon_ids:
-            if pid in opponent_ids:
-                continue
-            attacker_types = pokemon_types.get(pid, [])
-            if not attacker_types or not opp_types:
-                continue
-            total = 0
-            for atk_type in attacker_types:
-                for def_type in opp_types:
-                    mul = effectiveness.get((atk_type, def_type), 1.0)
-                    total += mul
-            avg = total / (len(attacker_types) * len(opp_types))
-            if avg > best_score:
-                best_score = avg
-                best_pokemon = pid
-        if best_pokemon:
-            counter_scores[best_pokemon] = counter_scores.get(best_pokemon, 0) + best_score
+    except Exception as e:
+        print(f"[GA] Error: {e}")
+        return jsonify({'error': str(e)}), 500
 
-    # Select top 6 unique counters
-    top_counters = sorted(counter_scores.items(), key=lambda x: x[1], reverse=True)
-    nemesis_ids = [pid for pid, _ in top_counters[:6]]
 
-    # Fill to 6 if needed (fallback to first available non-opponent)
-    fallback_pool = [pid for pid in all_pokemon_ids if pid not in opponent_ids and pid not in nemesis_ids]
-    while len(nemesis_ids) < 6 and fallback_pool:
-        nemesis_ids.append(fallback_pool.pop(0))
+# =============================================================
+# ROUTE 2 — Reinforcement Learning Nemesis  →  /api/nemesis/rl
+# =============================================================
 
-    cur.close()
-    conn.close()
+# Global RL agent — loaded ONCE, reused on every request
+# This is important because training takes a long time
+_rl_agent = None
 
-    return jsonify({'nemesis_team': nemesis_ids})
+def get_rl_agent():
+    global _rl_agent
+    if _rl_agent is None:
+        from nemesis import Nemesis
+        print("[RL] Loading agent!")
+        _rl_agent = Nemesis(db_config=DB_CONFIG)
+        print("[RL] Agent ready.")
+    return _rl_agent
 
-# ---------- Authentication routes ----------
+@app.route('/api/nemesis/rl', methods=['POST'])
+@login_required
+def api_nemesis_rl():
+    data = request.get_json()
+    opponent_ids = data.get('team')
+    if not opponent_ids or len(opponent_ids) != 6:
+        return jsonify({'error': 'Team must contain exactly 6 Pokémon IDs'}), 400
+
+    try:
+        print(f"[RL] Getting team for opponent ids: {opponent_ids}")
+        agent = get_rl_agent()
+        nemesis_ids = agent.get_team(opponent_ids)
+        return jsonify({'nemesis_team': nemesis_ids})
+
+    except Exception as e:
+        print(f"[RL] Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ---------- Auth routes ----------
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
@@ -223,8 +287,7 @@ def login():
     if user and check_password_hash(user[1], password):
         session['user_id'] = user[0]
         return jsonify({'success': True})
-    else:
-        return jsonify({'error': 'Invalid username or password'}), 401
+    return jsonify({'error': 'Invalid username or password'}), 401
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -258,6 +321,5 @@ def logout():
     session.clear()
     return jsonify({'success': True})
 
-# ---------- Run the app ----------
 if __name__ == '__main__':
     app.run(debug=True)
