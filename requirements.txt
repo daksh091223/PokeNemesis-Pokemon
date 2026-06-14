@@ -4,3 +4,5 @@ requests
 werkzeug
 tqdm
 urllib3
+torch
+numpy
