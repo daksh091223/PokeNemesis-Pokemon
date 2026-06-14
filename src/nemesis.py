@@ -12,12 +12,18 @@ class Move:
         self.accuracy = accuracy
 
 class Pokemon:
-    def __init__(self, id: int, name: str, types: List[str], base_stat_total: int, speed: int, level: int = 50, learnset: List['Move'] = None):
+    def __init__(self, id: int, name: str, types: List[str], hp: int, attack: int, defense: int, sp_atk: int, sp_def: int, speed: int, level: int = 50, learnset: List['Move'] = None):
         self.id = id
         self.name = name
         self.types = types
-        self.base_stat_total = base_stat_total
+        self.hp = hp
+        self.attack = attack
+        self.defense = defense
+        self.sp_atk = sp_atk
+        self.sp_def = sp_def
         self.speed = speed
+        # Calculate Base Stat Total dynamically instead of passing it in
+        self.base_stat_total = hp + attack + defense + sp_atk + sp_def + speed
         self.level = level
         self.learnset = learnset or []
         self.assigned_moves: List['Move'] = []
@@ -51,8 +57,13 @@ def load_type_chart_from_db(db_params: dict, table_name: str = 'type_effectivene
         conn = psycopg2.connect(**db_params)
         cursor = conn.cursor()
         
-        # Using placeholder query names according to user spec (multiplier, types of opponent, my type)
-        cursor.execute(f"SELECT my_type, opponent_type, multiplier FROM {table_name}")
+        # Extract the explicit string names via foreign key lookup on types table
+        cursor.execute(f"""
+            SELECT t1.name as my_type, t2.name as opponent_type, te.multiplier 
+            FROM {table_name} te
+            JOIN types t1 ON te.atk_id = t1.id
+            JOIN types t2 ON te.def_id = t2.id
+        """)
         rows = cursor.fetchall()
         
         TYPE_CHART = {}
@@ -80,8 +91,9 @@ def get_type_multiplier(attack_type: str, defense_types: List[str]) -> float:
 # ---------------------------------------------------------
 def evaluate_move_against_opponent(move: Move, candidate: Pokemon, opponent: Pokemon, effective_level: int) -> float:
     """Calculates the expected damage of a single move against an opponent."""
-    # Base Damage scaled by level
-    damage = move.base_power * (effective_level / 50.0)
+    # Scale damage dynamically based on the Pokemon's overall strength (BST)
+    bst_multiplier = candidate.base_stat_total / 400.0
+    damage = move.base_power * (effective_level / 50.0) * bst_multiplier
     
     # STAB (Same Type Attack Bonus)
     if move.type in candidate.types:
@@ -89,6 +101,12 @@ def evaluate_move_against_opponent(move: Move, candidate: Pokemon, opponent: Pok
         
     # Type Effectiveness
     multiplier = get_type_multiplier(move.type, opponent.types)
+    # Exponential scaling to heavily prioritize Super Effective moves
+    if multiplier > 1.0:
+        multiplier = multiplier ** 2
+    elif multiplier < 1.0:
+        multiplier = multiplier ** 2
+        
     damage *= multiplier
     
     # Accuracy factored as an expected value
@@ -132,7 +150,7 @@ def f_matchup_score(candidate: Pokemon, opponent: Pokemon, max_allowed_level: in
             best_expected_damage = simulated_damage
             
     # 3. Defensive resilience / Speed factor...
-    speed_multiplier = 1.2 if candidate.speed > opponent.speed else 1.0
+    speed_multiplier = 1.5 if candidate.speed > opponent.speed else 1.0
     
     return best_expected_damage * speed_multiplier
 
@@ -162,7 +180,11 @@ def precalculate_matchups(all_pokemon: List[Pokemon], opponent_team: List[Pokemo
             continue
             
         # Impose cap: candidate's base stat total must not exceed the highest of the opponent's team
-        if candidate.base_stat_total > max_opponent_bst:
+        if candidate.base_stat_total > max_opponent_bst + 40:
+            continue
+            
+        # Impose lower bound: candidate's base stat total must not be lower than max_opponent_bst - 60
+        if candidate.base_stat_total < max_opponent_bst - 60:
             continue
             
         valid_pokemon.append(candidate)
@@ -188,34 +210,52 @@ def base_score(team: List[Pokemon], opponent_team: List[Pokemon]) -> float:
         total += team_sum
     return total
 
-def too_many_same_types(team: List[Pokemon]) -> bool:
-    """Heuristic: Flag if a team has too many overlapping types."""
+def calculate_type_diversity_score(team: List[Pokemon]) -> float:
+    """Calculates immense penalties for duplicate types and huge rewards for unique typing."""
     type_counts = {}
     for p in team:
         for t in p.types:
             type_counts[t] = type_counts.get(t, 0) + 1
-            if type_counts[t] >= 3:
-                return True
-    return False
-
-def has_fast(team: List[Pokemon]) -> bool:
-    """Heuristic: Ensure the team has at least one fast Pokemon."""
-    return any(p.speed >= 100 for p in team)
+            
+    score_mod = 0.0
+    for count in type_counts.values():
+        if count > 1:
+            # Deduct 5000 points per overlapping type offense
+            score_mod -= (count - 1) * 1000.0
+            
+    # Reward for broad coverage (up to 12 possible unique types)
+    score_mod += len(type_counts) * 5000.0
+    return score_mod
 
 def fitness(team: List[Pokemon], opponent_team: List[Pokemon]) -> float:
     """The complete fitness function combining base score and penalties."""
     score = base_score(team, opponent_team)
 
-    # Apply penalties
-    if too_many_same_types(team):
-        score -= 10.0
+    # 1. Type Diversity Overhaul
+    score += calculate_type_diversity_score(team)
 
-    if not has_fast(team):
-        score -= 5.0
+    # 2. Emphasize Pure Speed (Team Average Speed directly affects score)
+    avg_speed = sum(p.speed for p in team) / len(team)
+    score += (avg_speed * 2.0)
 
-    # Reward Pokemon with higher Base Stats (incentivize closing the gap to the max cap)
+    # 3. Massively increase the raw BST score weight (from *5 to *20)
+    # so base stats forcefully compete against pure typing synergy
     avg_bst = sum(p.base_stat_total for p in team) / len(team)
-    score += (avg_bst / 20.0) # Scaled so it rewards good stats without entirely ignoring matchup value
+    score += (avg_bst * 5.0) 
+
+    # 4. Totality reward: if any individual values (speed, attack, defense, hp) are > 100, reward 1.2x
+    has_high_stat = False
+    for p in team:
+        # We check speed, and gracefully check other potential stats if they get added
+        for stat in ['speed', 'attack', 'defense', 'hp', 'sp_atk', 'sp_def']:
+            if getattr(p, stat, 0) > 100:
+                has_high_stat = True
+                break
+        if has_high_stat:
+            break
+            
+    if has_high_stat:
+        score *= 1.2
 
     return score
 
@@ -288,8 +328,8 @@ def mutate(team: List[Pokemon], all_pokemon: List[Pokemon], mutation_rate: float
 def genetic_algorithm(
     opponent_team: List[Pokemon], 
     all_pokemon: List[Pokemon], 
-    generations: int = 100, 
-    pop_size: int = 50,
+    generations: int = 250, 
+    pop_size: int = 100,
     mutation_rate: float = 0.2
 ) -> List[Pokemon]:
     """
@@ -349,9 +389,6 @@ def genetic_algorithm(
     best_idx = final_fitnesses.index(max(final_fitnesses))
     return population[best_idx]
 
-# ---------------------------------------------------------
-# 7. SEQUENTIAL GENERATOR (DISJOINT TEAMS)
-# ---------------------------------------------------------
 def get_multiple_disjoint_teams(
     opponent_team: List[Pokemon], 
     all_pokemon: List[Pokemon],
@@ -360,10 +397,7 @@ def get_multiple_disjoint_teams(
     pop_size: int = 50,
     mutation_rate: float = 0.2
 ) -> List[List[Pokemon]]:
-    """
-    Runs the Genetic Algorithm iteratively, banning previously chosen Pokemon,
-    to ensure the resulting teams are completely disjoint.
-    """
+    
     disjoint_teams = []
     available_pokemon = list(all_pokemon)
     
